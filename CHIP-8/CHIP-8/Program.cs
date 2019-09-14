@@ -1,12 +1,14 @@
 ﻿using System;
 
-namespace CHIP_8
+namespace Chip8
 {
     class Program
     {
         static void Main(string[] args)
         {
-            Console.WriteLine("Hello World!");
+            var chip8 = new Chip8();
+
+            chip8.Initialize();
         }
     }
 }
