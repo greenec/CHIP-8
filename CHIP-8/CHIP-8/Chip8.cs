@@ -2,8 +2,12 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Shapes;
 
-namespace Chip8
+namespace CHIP_8
 {
     public class Chip8
     {
@@ -12,7 +16,6 @@ namespace Chip8
         private byte VF;
         private ushort I;
 
-        // TODO: delay and sound timers
         private byte DelayTimer;
         private byte SoundTimer;
 
@@ -21,40 +24,42 @@ namespace Chip8
         private ushort[] Stack = new ushort[16];
         private byte[,] Display = new byte[64, 32];
 
-        ushort Instruction;
+        // implementation-specific variables
+        private Key? LastKeyPressed = null;
+        private readonly Random Random = new Random();
+        private readonly Canvas Canvas;
 
-        Random Random = new Random();
-
-        private Dictionary<ConsoleKey, byte> KeyMap = new Dictionary<ConsoleKey, byte>()
+        private readonly Dictionary<Key, byte> KeyMap = new Dictionary<Key, byte>()
         {
-            { ConsoleKey.D1, 0x1 },
-            { ConsoleKey.D2, 0x2 },
-            { ConsoleKey.D3, 0x3 },
-            { ConsoleKey.D4, 0xC },
-            { ConsoleKey.Q, 0x4 },
-            { ConsoleKey.W, 0x5 },
-            { ConsoleKey.E, 0x6 },
-            { ConsoleKey.R, 0xD },
-            { ConsoleKey.A, 0x7 },
-            { ConsoleKey.S, 0x8 },
-            { ConsoleKey.D, 0x9 },
-            { ConsoleKey.F, 0xE },
-            { ConsoleKey.Z, 0xA },
-            { ConsoleKey.X, 0x0 },
-            { ConsoleKey.C, 0xB },
-            { ConsoleKey.V, 0xF },
+            { Key.D1, 0x1 },
+            { Key.D2, 0x2 },
+            { Key.D3, 0x3 },
+            { Key.D4, 0xC },
+            { Key.Q, 0x4 },
+            { Key.W, 0x5 },
+            { Key.E, 0x6 },
+            { Key.R, 0xD },
+            { Key.A, 0x7 },
+            { Key.S, 0x8 },
+            { Key.D, 0x9 },
+            { Key.F, 0xE },
+            { Key.Z, 0xA },
+            { Key.X, 0x0 },
+            { Key.C, 0xB },
+            { Key.V, 0xF },
         };
+
+        public Chip8(Canvas canvas)
+        {
+            Canvas = canvas;
+        }
 
         public void Initialize()
         {
-            Console.WindowWidth = Display.GetLength(0);
-            Console.WindowHeight = Display.GetLength(1) + 2;
-            Console.CursorVisible = false;
-
             InitializeSprites();
 
-            // start timer task
-            Task.Run(() =>
+            // start 60 Hz timer task
+            Task.Run(async () =>
             {
                 while (true)
                 {
@@ -69,14 +74,14 @@ namespace Chip8
                         // Console.Beep();
                     }
 
-                    Task.Delay(1000 / 60);
+                    await Task.Delay(1000 / 60);
                 }
             });
         }
 
         public void Load(string filename)
         {
-            var rom = File.ReadAllBytes("../../../roms/" + filename);
+            var rom = File.ReadAllBytes("../../roms/" + filename);
 
             for (int i = 0; i < rom.Length; i++)
             {
@@ -84,46 +89,51 @@ namespace Chip8
             }
         }
 
-        public void Execute()
+        public void KeyPressed(Key key)
+        {
+            LastKeyPressed = key;
+        }
+
+        public async Task Execute()
         {
             var blah = Memory[PC];
             var a = blah << 8;
             var b = Memory[PC + 1];
 
-            Instruction = (ushort)(a + b);
+            ushort instruction = (ushort)(a + b);
 
             // 00E0 - CLS
-            if (Instruction == 0x00E0)
+            if (instruction == 0x00E0)
             {
                 ClearDisplay();
             }
 
             // 00EE RET
-            if (Instruction == 0x00EE)
+            if (instruction == 0x00EE)
             {
                 PC = Stack[SP--];
             }
 
-            ushort nnn = (ushort)(Instruction & 0x0FFF);
-            byte x = (byte)((Instruction & 0x0F00) >> 8);
-            byte y = (byte)((Instruction & 0x00F0) >> 4);
-            byte kk = (byte)(Instruction & 0x00FF);
-            byte n = (byte)(Instruction & 0x000F);
+            ushort nnn = (ushort)(instruction & 0x0FFF);
+            byte x = (byte)((instruction & 0x0F00) >> 8);
+            byte y = (byte)((instruction & 0x00F0) >> 4);
+            byte kk = (byte)(instruction & 0x00FF);
+            byte n = (byte)(instruction & 0x000F);
 
             // 1nnn - JP addr
-            if ((Instruction & 0xF000) == 0x1000)
+            if ((instruction & 0xF000) == 0x1000)
             {
-                PC = (ushort)(Instruction & 0x0FFF);
+                PC = (ushort)(instruction & 0x0FFF);
             }
 
             // 2nnn - CALL addr
-            if ((Instruction & 0xF000) == 0x2000)
+            if ((instruction & 0xF000) == 0x2000)
             {
                 Stack[++SP] = PC;
             }
 
             // 3xkk - SE Vx, byte
-            if ((Instruction & 0xF000) == 0x3000)
+            if ((instruction & 0xF000) == 0x3000)
             {
                 if (Registers[x] == kk)
                 {
@@ -132,7 +142,7 @@ namespace Chip8
             }
 
             // 4xkk - SNE Vx, byte
-            if ((Instruction & 0xF000) == 0x4000)
+            if ((instruction & 0xF000) == 0x4000)
             {
                 if (Registers[x] != kk)
                 {
@@ -141,7 +151,7 @@ namespace Chip8
             }
 
             // 5xy0 - SE Vx, Vy
-            if ((Instruction & 0xF00F) == 0x5000)
+            if ((instruction & 0xF00F) == 0x5000)
             {
                 if (Registers[x] != Registers[y])
                 {
@@ -150,43 +160,43 @@ namespace Chip8
             }
 
             // 6xkk - LD Vx, byte
-            if ((Instruction & 0xF000) == 0x6000)
+            if ((instruction & 0xF000) == 0x6000)
             {
                 Registers[x] = kk;
             }
 
             // 7xkk - ADD Vx, byte
-            if ((Instruction & 0xF000) == 0x7000)
+            if ((instruction & 0xF000) == 0x7000)
             {
                 Registers[x] += kk;
             }
 
             // 8xy0 - LD Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8000)
+            if ((instruction & 0xF00F) == 0x8000)
             {
                 Registers[x] = Registers[y];
             }
 
             // 8xy1 - OR Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8001)
+            if ((instruction & 0xF00F) == 0x8001)
             {
                 Registers[x] |= Registers[y];
             }
 
             // 8xy2 - AND Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8002)
+            if ((instruction & 0xF00F) == 0x8002)
             {
                 Registers[x] &= Registers[y];
             }
 
             // 8xy3 - XOR Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8003)
+            if ((instruction & 0xF00F) == 0x8003)
             {
                 Registers[x] ^= Registers[y];
             }
 
             // 8xy4 - ADD Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8004)
+            if ((instruction & 0xF00F) == 0x8004)
             {
                 int result = Registers[x] + Registers[y];
 
@@ -203,7 +213,7 @@ namespace Chip8
             }
 
             // 8xy5 - SUB Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8005)
+            if ((instruction & 0xF00F) == 0x8005)
             {
                 if (Registers[x] > Registers[y])
                 {
@@ -218,7 +228,7 @@ namespace Chip8
             }
 
             // 8xy6 - SHR Vx {, Vy}
-            if ((Instruction & 0xF00F) == 0x8006)
+            if ((instruction & 0xF00F) == 0x8006)
             {
                 if ((Registers[x] & 1) == 1)
                 {
@@ -233,7 +243,7 @@ namespace Chip8
             }
 
             // 8xy7 - SUBN Vx, Vy
-            if ((Instruction & 0xF00F) == 0x8007)
+            if ((instruction & 0xF00F) == 0x8007)
             {
                 if (Registers[y] > Registers[x])
                 {
@@ -248,7 +258,7 @@ namespace Chip8
             }
 
             // 8xyE - SHL Vx {, Vy}
-            if ((Instruction & 0xF00F) == 0x800E)
+            if ((instruction & 0xF00F) == 0x800E)
             {
                 if ((Registers[x] & 0x8000) == 0x8000)
                 {
@@ -263,7 +273,7 @@ namespace Chip8
             }
 
             // 9xy0 - SNE Vx, Vy
-            if ((Instruction & 0xF00F) == 0x9000)
+            if ((instruction & 0xF00F) == 0x9000)
             {
                 if (Registers[x] != Registers[y])
                 {
@@ -272,25 +282,25 @@ namespace Chip8
             }
 
             // Annn - LD I, addr
-            if ((Instruction & 0xF000) == 0xA000)
+            if ((instruction & 0xF000) == 0xA000)
             {
                 I = nnn;
             }
 
             // Bnnn - JP V0, addr
-            if ((Instruction & 0xF000) == 0xB000)
+            if ((instruction & 0xF000) == 0xB000)
             {
                 PC = (ushort)(nnn + Registers[0]);
             }
 
             // Cxkk - RND Vx, byte
-            if ((Instruction & 0xF000) == 0xC000)
+            if ((instruction & 0xF000) == 0xC000)
             {
                 Registers[x] = (byte)(Random.Next(256) & kk);
             }
 
             // Dxyn - DRW Vx, Vy, nibble
-            if ((Instruction & 0xF000) == 0xD000)
+            if ((instruction & 0xF000) == 0xD000)
             {
                 bool collision = false;
 
@@ -328,63 +338,63 @@ namespace Chip8
             }
 
             // Ex9E - SKP Vx
-            if ((Instruction & 0xF0FF) == 0xE09E)
+            if ((instruction & 0xF0FF) == 0xE09E)
             {
-                var keyPress = Console.ReadKey();
-                if (keyPress.Key.ToString() == Registers[x].ToString("X1"))
+                byte keyPress = await ReadKey();
+                if (keyPress == Registers[x])
                 {
                     PC += 2;
                 }
             }
 
             // ExA1 - SKNP Vx
-            if ((Instruction & 0xF0FF) == 0xE0A1)
+            if ((instruction & 0xF0FF) == 0xE0A1)
             {
-                var keyPress = Console.ReadKey();
-                if (keyPress.Key.ToString() != Registers[x].ToString("X1"))
+                byte keyPress = await ReadKey();
+                if (keyPress != Registers[x])
                 {
                     PC += 2;
                 }
             }
 
             // Fx07 - LD Vx, DT
-            if ((Instruction & 0xF0FF) == 0xF007)
+            if ((instruction & 0xF0FF) == 0xF007)
             {
                 Registers[x] = DelayTimer;
             }
 
             // Fx0A - LD Vx, K
-            if ((Instruction & 0xF0FF) == 0xF00A)
+            if ((instruction & 0xF0FF) == 0xF00A)
             {
-                Registers[x] = ReadKey();
+                Registers[x] = await ReadKey();
             }
 
             // Fx15 - LD DT, Vx
-            if ((Instruction & 0xF0FF) == 0xF015)
+            if ((instruction & 0xF0FF) == 0xF015)
             {
                 DelayTimer = Registers[x];
             }
 
             // Fx18 - LD ST, Vx
-            if ((Instruction & 0xF0FF) == 0xF018)
+            if ((instruction & 0xF0FF) == 0xF018)
             {
                 SoundTimer = Registers[x];
             }
 
             // Fx1E - ADD I, Vx
-            if ((Instruction & 0xF0FF) == 0xF01E)
+            if ((instruction & 0xF0FF) == 0xF01E)
             {
                 I += Registers[x];
             }
 
             // Fx29 - LD F, Vx
-            if ((Instruction & 0xF0FF) == 0xF029)
+            if ((instruction & 0xF0FF) == 0xF029)
             {
                 I = (byte)(Registers[x] * 5);
             }
 
             // Fx33 - LD B, Vx
-            if ((Instruction & 0xF0FF) == 0xF033)
+            if ((instruction & 0xF0FF) == 0xF033)
             {
                 byte bcd = Registers[x];
 
@@ -396,7 +406,7 @@ namespace Chip8
             }
 
             // Fx55 - LD [I], Vx
-            if ((Instruction & 0xF0FF) == 0xF055)
+            if ((instruction & 0xF0FF) == 0xF055)
             {
                 for (int idx = 0; idx < x; idx++)
                 {
@@ -405,7 +415,7 @@ namespace Chip8
             }
 
             // Fx65 - LD Vx, [I]
-            if ((Instruction & 0xF0FF) == 0xF065)
+            if ((instruction & 0xF0FF) == 0xF065)
             {
                 for (int idx = 0; idx < x; idx++)
                 {
@@ -420,7 +430,9 @@ namespace Chip8
 
         private void Draw()
         {
-            Console.Clear();
+            Canvas.Children.Clear();
+
+            Canvas.Background = new SolidColorBrush(Colors.Black);
 
             for (int x = 0; x < Display.GetLength(0); x++)
             {
@@ -428,19 +440,19 @@ namespace Chip8
                 {
                     if (Display[x, y] == 1)
                     {
-                        Console.SetCursorPosition(x, y);
-                        Console.BackgroundColor = ConsoleColor.White;
-                        Console.Write(' ');
+                        Rectangle rec = new Rectangle();
+
+                        Canvas.SetTop(rec, y * 10);
+                        Canvas.SetLeft(rec, x * 10);
+
+                        rec.Width = 10;
+                        rec.Height = 10;
+                        rec.Fill = new SolidColorBrush(Colors.White);
+
+                        Canvas.Children.Add(rec);
                     }
                 }
             }
-
-            Console.BackgroundColor = ConsoleColor.Black;
-
-            Console.SetCursorPosition(0, Display.GetLength(1));
-
-            Console.WriteLine("PC: " + PC);
-            Console.WriteLine("Instruction: 0x" + Instruction.ToString("X2"));
         }
 
         private void ClearDisplay()
@@ -454,7 +466,7 @@ namespace Chip8
             }
         }
 
-        private byte ReadKey()
+        private async Task<byte> ReadKey()
         {
             /*
             Keypad                   Keyboard
@@ -471,11 +483,14 @@ namespace Chip8
 
             while (true)
             {
-                var keyPress = Console.ReadKey();
-                if (KeyMap.ContainsKey(keyPress.Key))
+                if (LastKeyPressed.HasValue && KeyMap.ContainsKey(LastKeyPressed.Value))
                 {
-                    return KeyMap[keyPress.Key];
+                    var ret = KeyMap[LastKeyPressed.Value];
+                    LastKeyPressed = null;
+                    return ret;
                 }
+
+                await Task.Delay(1);
             }
         }
 
