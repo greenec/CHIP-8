@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace Chip8
+﻿namespace Chip8
 {
     class Program
     {
@@ -9,6 +7,13 @@ namespace Chip8
             var chip8 = new Chip8();
 
             chip8.Initialize();
+
+            chip8.Load("helloworld.rom");
+
+            while (true)
+            {
+                chip8.Execute();
+            }
         }
     }
 }
