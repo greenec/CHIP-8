@@ -25,6 +25,7 @@ namespace CHIP_8
 
         // implementation-specific variables
         private Key? LastKeyPressed = null;
+        private byte[] Keys = new byte[16];
         private readonly Random Random = new Random();
         private readonly Canvas Canvas;
 
@@ -88,9 +89,27 @@ namespace CHIP_8
             }
         }
 
-        public void KeyPressed(Key key)
+        public void KeyDown(Key key)
         {
             LastKeyPressed = key;
+
+            if (KeyMap.ContainsKey(key))
+            {
+                Keys[KeyMap[key]] = 1;
+            }
+        }
+
+        public void KeyUp(Key key)
+        {
+            if (LastKeyPressed == key)
+            {
+                LastKeyPressed = null;
+            }
+
+            if (KeyMap.ContainsKey(key))
+            {
+                Keys[KeyMap[key]] = 0;
+            }
         }
 
         public async Task Execute()
@@ -340,8 +359,9 @@ namespace CHIP_8
             // Ex9E - SKP Vx
             if ((instruction & 0xF0FF) == 0xE09E)
             {
-                byte keyPress = await ReadKey();
-                if (keyPress == Registers[x])
+                byte key = Registers[x];
+
+                if (Keys[key] == 1)
                 {
                     PC += 2;
                 }
@@ -350,8 +370,9 @@ namespace CHIP_8
             // ExA1 - SKNP Vx
             if ((instruction & 0xF0FF) == 0xE0A1)
             {
-                byte keyPress = await ReadKey();
-                if (keyPress != Registers[x])
+                byte key = Registers[x];
+
+                if (Keys[key] == 0)
                 {
                     PC += 2;
                 }
@@ -366,7 +387,7 @@ namespace CHIP_8
             // Fx0A - LD Vx, K
             if ((instruction & 0xF0FF) == 0xF00A)
             {
-                Registers[x] = await ReadKey();
+                Registers[x] = await WaitForKey();
             }
 
             // Fx15 - LD DT, Vx
@@ -468,7 +489,7 @@ namespace CHIP_8
             }
         }
 
-        private async Task<byte> ReadKey()
+        private async Task<byte> WaitForKey()
         {
             /*
             Keypad                   Keyboard
