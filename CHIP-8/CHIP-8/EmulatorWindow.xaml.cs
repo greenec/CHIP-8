@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 
 namespace CHIP_8
@@ -8,7 +8,7 @@ namespace CHIP_8
     /// </summary>
     public partial class EmulatorWindow : Window
     {
-        private Chip8 Chip8;
+        private readonly Chip8 Chip8;
 
         public EmulatorWindow()
         {
@@ -21,7 +21,7 @@ namespace CHIP_8
         {
             Chip8.Initialize();
 
-            Chip8.Load("helloworld.rom");
+            Chip8.Load("pong.ch8");
 
             while (true)
             {

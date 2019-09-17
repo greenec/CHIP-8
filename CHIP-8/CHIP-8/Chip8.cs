@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -123,7 +123,8 @@ namespace CHIP_8
             // 1nnn - JP addr
             if ((instruction & 0xF000) == 0x1000)
             {
-                PC = (ushort)(instruction & 0x0FFF);
+                PC = nnn;
+                return;
             }
 
             // 2nnn - CALL addr
@@ -315,8 +316,8 @@ namespace CHIP_8
                         byte bit = (byte)(row & 1);
                         row >>= 1;
 
-                        int theX = xStart + (xPos % Display.GetLength(0));
-                        int theY = yStart + (yPos % Display.GetLength(1));
+                        int theX = (xStart + xPos) % Display.GetLength(0);
+                        int theY = (yStart + yPos) % Display.GetLength(1);
 
                         if (Display[theX, theY] != bit)
                         {
