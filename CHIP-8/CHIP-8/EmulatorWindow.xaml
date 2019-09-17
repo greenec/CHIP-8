@@ -4,8 +4,8 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="CHIP-8 Emulator" Height="350" Width="650">
+        Title="CHIP-8 Emulator" Height="640" Width="1280">
     <Grid>
-        <Canvas x:Name="Canvas" KeyDown="Canvas_KeyDown" KeyUp="Canvas_KeyUp" Focusable="True" Loaded="Canvas_Loaded"></Canvas>
+        <Image x:Name="img" RenderOptions.BitmapScalingMode="NearestNeighbor" KeyDown="Canvas_KeyDown" KeyUp="Canvas_KeyUp" Focusable="True" Loaded="Canvas_Loaded" />
     </Grid>
 </Window>

@@ -1,18 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Media;
 using System.Threading.Tasks;
-using System.Windows.Controls;
+using System.Windows;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Shapes;
+using System.Windows.Media.Imaging;
 
 namespace CHIP_8
 {
     public class Chip8
     {
-        private byte[] Memory = new byte[4096];
-        private byte[] Registers = new byte[16];
+        private readonly byte[] Memory = new byte[4096];
+        private readonly byte[] Registers = new byte[16];
         private ushort I;
 
         private byte DelayTimer;
@@ -20,14 +20,14 @@ namespace CHIP_8
 
         private ushort PC = 0x200;
         private byte SP;
-        private ushort[] Stack = new ushort[16];
-        private byte[,] Display = new byte[64, 32];
+        private readonly ushort[] Stack = new ushort[16];
+        private readonly byte[,] Display = new byte[64, 32];
 
         // implementation-specific variables
         private Key? LastKeyPressed = null;
-        private byte[] Keys = new byte[16];
+        private readonly byte[] Keys = new byte[16];
         private readonly Random Random = new Random();
-        private readonly Canvas Canvas;
+        private readonly WriteableBitmap WriteableBitmap;
 
         private readonly Dictionary<Key, byte> KeyMap = new Dictionary<Key, byte>()
         {
@@ -49,13 +49,22 @@ namespace CHIP_8
             { Key.V, 0xF },
         };
 
-        public Chip8(Canvas canvas)
+        public Chip8(WriteableBitmap writeableBitmap)
         {
-            Canvas = canvas;
+            WriteableBitmap = writeableBitmap;
         }
 
         public void Initialize()
         {
+            // set the screen to all black pixels
+            for (int y = 0; y < (int)WriteableBitmap.Height; y++)
+            {
+                for (int x = 0; x < (int)WriteableBitmap.Width; x++)
+                {
+                    SetPixel(x, y, false);
+                }
+            }
+
             InitializeSprites();
 
             // start 60 Hz timer task
@@ -71,7 +80,7 @@ namespace CHIP_8
                     if (SoundTimer > 0)
                     {
                         SoundTimer -= 1;
-                        // Console.Beep();
+                        SystemSounds.Beep.Play();
                     }
 
                     await Task.Delay(1000 / 60);
@@ -343,6 +352,8 @@ namespace CHIP_8
                         }
 
                         Display[xCoord, yCoord] = (byte)(initial ^ bit);
+
+                        SetPixel(xCoord, yCoord, (Display[xCoord, yCoord] == 1) ? true : false);
                     }
                 }
 
@@ -354,6 +365,8 @@ namespace CHIP_8
                 {
                     Registers[0xF] = 0;
                 }
+
+                await Task.Delay(1);
             }
 
             // Ex9E - SKP Vx
@@ -445,48 +458,36 @@ namespace CHIP_8
             }
 
             PC += 2;
-
-            await Draw();
         }
 
-        private async Task Draw()
+        private void SetPixel(int x, int y, bool enabled)
         {
-            Canvas.Children.Clear();
+            Int32Rect rect = new Int32Rect(x, y, 1, 1);
 
-            Canvas.Background = new SolidColorBrush(Colors.Black);
-
-            for (int x = 0; x < Display.GetLength(0); x++)
+            if (enabled)
             {
-                for (int y = 0; y < Display.GetLength(1); y++)
-                {
-                    if (Display[x, y] == 1)
-                    {
-                        Rectangle rec = new Rectangle();
-
-                        Canvas.SetTop(rec, y * 10);
-                        Canvas.SetLeft(rec, x * 10);
-
-                        rec.Width = 10;
-                        rec.Height = 10;
-                        rec.Fill = new SolidColorBrush(Colors.White);
-
-                        Canvas.Children.Add(rec);
-                    }
-                }
+                byte[] whitePixel = { 255, 255, 255, 255 };
+                WriteableBitmap.WritePixels(rect, whitePixel, 4, 0);
             }
-
-            await Task.Delay(1);
+            else
+            {
+                byte[] blackPixel = { 0, 0, 0, 255 };
+                WriteableBitmap.WritePixels(rect, blackPixel, 4, 0);
+            }
         }
 
-        private void ClearDisplay()
+        private async void ClearDisplay()
         {
             for (int col = 0; col < Display.GetLength(0); col++)
             {
                 for (int row = 0; row < Display.GetLength(1); row++)
                 {
                     Display[col, row] = 0;
+                    SetPixel(col, row, false);
                 }
             }
+
+            await Task.Delay(1);
         }
 
         private async Task<byte> WaitForKey()

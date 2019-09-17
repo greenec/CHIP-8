@@ -92,7 +92,10 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
-    <None Include="roms\helloworld.rom" />
+    <None Include="roms\breakout.ch8" />
+    <None Include="roms\helloworld.ch8" />
+    <None Include="roms\pong.ch8" />
+    <None Include="roms\space_invaders.ch8" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

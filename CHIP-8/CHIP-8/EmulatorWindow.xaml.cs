@@ -1,5 +1,6 @@
 using System.Windows;
-using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace CHIP_8
 {
@@ -10,18 +11,24 @@ namespace CHIP_8
     {
         private readonly Chip8 Chip8;
 
+        private readonly WriteableBitmap WriteableBitmap;
+
         public EmulatorWindow()
         {
             InitializeComponent();
 
-            Chip8 = new Chip8(Canvas);
+            WriteableBitmap = new WriteableBitmap(64, 32, 96, 96, PixelFormats.Bgra32, null);
+
+            img.Source = WriteableBitmap;
+
+            Chip8 = new Chip8(WriteableBitmap);
         }
 
         public async void Run()
         {
             Chip8.Initialize();
 
-            Chip8.Load("breakout.ch8");
+            Chip8.Load("space_invaders.ch8");
 
             while (true)
             {
@@ -31,7 +38,7 @@ namespace CHIP_8
 
         private void Canvas_Loaded(object sender, RoutedEventArgs e)
         {
-            Canvas.Focus();
+            img.Focus();
         }
 
         private void Canvas_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
