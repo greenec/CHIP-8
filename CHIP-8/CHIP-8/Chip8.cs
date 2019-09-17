@@ -311,7 +311,7 @@ namespace CHIP_8
                 for (int yPos = 0; yPos < n; yPos++)
                 {
                     byte row = Memory[I + yPos];
-                    for (int xPos = 0; xPos < 8; xPos++)
+                    for (int xPos = 7; xPos >= 0; xPos--)
                     {
                         byte bit = (byte)(row & 1);
                         row >>= 1;
