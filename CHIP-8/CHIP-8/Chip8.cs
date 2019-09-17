@@ -13,7 +13,6 @@ namespace CHIP_8
     {
         private byte[] Memory = new byte[4096];
         private byte[] Registers = new byte[16];
-        private byte VF;
         private ushort I;
 
         private byte DelayTimer;
@@ -96,11 +95,7 @@ namespace CHIP_8
 
         public async Task Execute()
         {
-            var blah = Memory[PC];
-            var a = blah << 8;
-            var b = Memory[PC + 1];
-
-            ushort instruction = (ushort)(a + b);
+            ushort instruction = (ushort)((Memory[PC] << 8) | Memory[PC + 1]);
 
             // 00E0 - CLS
             if (instruction == 0x00E0)
@@ -131,6 +126,8 @@ namespace CHIP_8
             if ((instruction & 0xF000) == 0x2000)
             {
                 Stack[++SP] = PC;
+                PC = nnn;
+                return;
             }
 
             // 3xkk - SE Vx, byte
@@ -154,7 +151,7 @@ namespace CHIP_8
             // 5xy0 - SE Vx, Vy
             if ((instruction & 0xF00F) == 0x5000)
             {
-                if (Registers[x] != Registers[y])
+                if (Registers[x] == Registers[y])
                 {
                     PC += 2;
                 }
@@ -203,11 +200,11 @@ namespace CHIP_8
 
                 if (result > 256)
                 {
-                    VF = 1;
+                    Registers[0xF] = 1;
                 }
                 else
                 {
-                    VF = 0;
+                    Registers[0xF] = 0;
                 }
 
                 Registers[x] = (byte)result;
@@ -218,11 +215,11 @@ namespace CHIP_8
             {
                 if (Registers[x] > Registers[y])
                 {
-                    VF = 1;
+                    Registers[0xF] = 1;
                 }
                 else
                 {
-                    VF = 0;
+                    Registers[0xF] = 0;
                 }
 
                 Registers[x] -= Registers[y];
@@ -233,11 +230,11 @@ namespace CHIP_8
             {
                 if ((Registers[x] & 1) == 1)
                 {
-                    VF = 1;
+                    Registers[0xF] = 1;
                 }
                 else
                 {
-                    VF = 0;
+                    Registers[0xF] = 0;
                 }
 
                 Registers[x] /= 2;
@@ -248,11 +245,11 @@ namespace CHIP_8
             {
                 if (Registers[y] > Registers[x])
                 {
-                    VF = 1;
+                    Registers[0xF] = 1;
                 }
                 else
                 {
-                    VF = 0;
+                    Registers[0xF] = 0;
                 }
 
                 Registers[x] = (byte)(Registers[y] - Registers[x]);
@@ -263,11 +260,11 @@ namespace CHIP_8
             {
                 if ((Registers[x] & 0x8000) == 0x8000)
                 {
-                    VF = 1;
+                    Registers[0xF] = 1;
                 }
                 else
                 {
-                    VF = 0;
+                    Registers[0xF] = 0;
                 }
 
                 Registers[x] *= 2;
@@ -316,25 +313,27 @@ namespace CHIP_8
                         byte bit = (byte)(row & 1);
                         row >>= 1;
 
-                        int theX = (xStart + xPos) % Display.GetLength(0);
-                        int theY = (yStart + yPos) % Display.GetLength(1);
+                        int xCoord = (xStart + xPos) % Display.GetLength(0);
+                        int yCoord = (yStart + yPos) % Display.GetLength(1);
 
-                        if (Display[theX, theY] != bit)
+                        byte initial = Display[xCoord, yCoord];
+
+                        if (initial != 0 && (initial ^ bit) == 0)
                         {
                             collision = true;
                         }
 
-                        Display[theX, theY] = bit;
+                        Display[xCoord, yCoord] = (byte)(initial ^ bit);
                     }
                 }
 
                 if (collision)
                 {
-                    VF = 1;
+                    Registers[0xF] = 1;
                 }
                 else
                 {
-                    VF = 0;
+                    Registers[0xF] = 0;
                 }
             }
 
@@ -426,10 +425,10 @@ namespace CHIP_8
 
             PC += 2;
 
-            Draw();
+            await Draw();
         }
 
-        private void Draw()
+        private async Task Draw()
         {
             Canvas.Children.Clear();
 
@@ -454,6 +453,8 @@ namespace CHIP_8
                     }
                 }
             }
+
+            await Task.Delay(1);
         }
 
         private void ClearDisplay()
