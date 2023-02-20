@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls;
 
 namespace CHIP_8
 {
@@ -14,19 +13,18 @@ namespace CHIP_8
         {
             InitializeComponent();
 
-            Chip8 = new Chip8(Canvas);
+            Chip8 = new Chip8();
+
+            Canvas.Source = Chip8.WriteableBitmap;
         }
 
         public async void Run()
         {
             Chip8.Initialize();
 
-            Chip8.Load("breakout.ch8");
+            Chip8.LoadRom("space_invaders.ch8");
 
-            while (true)
-            {
-                await Chip8.Execute();
-            }
+            await Chip8.Run();
         }
 
         private void Canvas_Loaded(object sender, RoutedEventArgs e)

@@ -11,7 +11,7 @@ namespace CHIP_8
         {
             EmulatorWindow emulatorWindow = new EmulatorWindow();
 
-            this.MainWindow = emulatorWindow;
+            MainWindow = emulatorWindow;
 
             emulatorWindow.Show();
             emulatorWindow.Run();
