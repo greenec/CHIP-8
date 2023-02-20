@@ -506,7 +506,7 @@ namespace CHIP_8
 
                         // Fx65 - LD Vx, [I]
                         case 0x65:
-                            for (int idx = 0; idx < x; idx++)
+                            for (int idx = 0; idx <= x; idx++)
                             {
                                 _registers[idx] = _memory[_I + idx];
                             }
