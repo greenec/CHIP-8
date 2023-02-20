@@ -5,31 +5,46 @@ using System.Media;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace CHIP_8
 {
     public class Chip8
     {
-        private readonly byte[] Memory = new byte[4096];
-        private readonly byte[] Registers = new byte[16];
-        private ushort I;
+        private enum PixelColor
+        {
+            Black = 0,
+            White = 1
+        }
 
-        private byte DelayTimer;
-        private byte SoundTimer;
+        private const int _initialPC = 0x200;
 
-        private ushort PC = 0x200;
-        private byte SP;
-        private readonly ushort[] Stack = new ushort[16];
-        private readonly byte[,] Display = new byte[64, 32];
+        public readonly WriteableBitmap WriteableBitmap = new WriteableBitmap(pixelWidth: 64, pixelHeight: 32, dpiX: 96, dpiY: 96, PixelFormats.BlackWhite, palette: null);
+
+        // CHIP-8 emulation variables
+        private readonly byte[] _memory = new byte[4096];
+        private readonly byte[] _registers = new byte[16];
+        private ushort _I;
+
+        private byte _delayTimer;
+        private byte _soundTimer;
+
+        private ushort _PC = _initialPC;
+        private byte _SP;
+        private readonly ushort[] _stack = new ushort[16];
+        private readonly byte[,] _display = new byte[64, 32];
 
         // implementation-specific variables
-        private Key? LastKeyPressed = null;
-        private readonly byte[] Keys = new byte[16];
-        private readonly Random Random = new Random();
-        private readonly WriteableBitmap WriteableBitmap;
+        private bool _waitingForInput;
+        private byte? _lastKeyPressed = null;
+        private string _lastFilename;
+        private Task _timerTask;
+        private readonly byte[] _keys = new byte[16];
+        private readonly Random _random = new Random();
 
-        private readonly Dictionary<Key, byte> KeyMap = new Dictionary<Key, byte>()
+        private readonly Dictionary<Key, byte> _keyMap = new Dictionary<Key, byte>()
         {
             { Key.D1, 0x1 },
             { Key.D2, 0x2 },
@@ -49,93 +64,133 @@ namespace CHIP_8
             { Key.V, 0xF },
         };
 
-        public Chip8(WriteableBitmap writeableBitmap)
+        private readonly byte[] _whitePixel = { 255 };
+        private readonly byte[] _blackPixel = { 0 };
+
+        public Chip8()
         {
-            WriteableBitmap = writeableBitmap;
+
         }
 
         public void Initialize()
         {
             // set the screen to all black pixels
-            for (int y = 0; y < (int)WriteableBitmap.Height; y++)
-            {
-                for (int x = 0; x < (int)WriteableBitmap.Width; x++)
-                {
-                    SetPixel(x, y, false);
-                }
-            }
+            ClearDisplay();
 
             InitializeSprites();
 
-            // start 60 Hz timer task
-            Task.Run(async () =>
+            if (_timerTask == null)
             {
-                while (true)
+                // start 60 Hz timer task
+                _timerTask = Task.Run(async () =>
                 {
-                    if (DelayTimer > 0)
+                    while (true)
                     {
-                        DelayTimer -= 1;
-                    }
+                        if (_delayTimer > 0)
+                        {
+                            _delayTimer -= 1;
+                        }
 
-                    if (SoundTimer > 0)
-                    {
-                        SoundTimer -= 1;
-                        SystemSounds.Beep.Play();
-                    }
+                        if (_soundTimer > 0)
+                        {
+                            _soundTimer -= 1;
+                            Dispatcher.CurrentDispatcher.Invoke(() => SystemSounds.Beep.Play());
+                        }
 
-                    await Task.Delay(1000 / 60);
-                }
-            });
+                        await Task.Delay(1000 / 60);
+                    }
+                });
+            }
         }
 
-        public void Load(string filename)
+        public void LoadRom(string filename)
         {
             var rom = File.ReadAllBytes("../../roms/" + filename);
 
             for (int i = 0; i < rom.Length; i++)
             {
-                Memory[0x200 + i] = rom[i];
+                _memory[_initialPC + i] = rom[i];
+            }
+
+            _lastFilename = filename;
+        }
+
+        public async Task Run()
+        {
+            while (true)
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    ushort instruction = Fetch();
+                    DecodeAndExecute(instruction);
+                }
+
+                // yield for the UI thread to handle key events and rendering
+                await Task.Delay(1);
             }
         }
 
         public void KeyDown(Key key)
         {
-            LastKeyPressed = key;
-
-            if (KeyMap.ContainsKey(key))
+            if (_keyMap.TryGetValue(key, out byte keyValue))
             {
-                Keys[KeyMap[key]] = 1;
+                _keys[keyValue] = 1;
+
+                if (_waitingForInput)
+                {
+                    _lastKeyPressed = keyValue;
+                }
+            }
+            else if (key == Key.Escape)
+            {
+                Reset();
             }
         }
 
         public void KeyUp(Key key)
         {
-            if (LastKeyPressed == key)
+            if (_keyMap.TryGetValue(key, out byte keyValue))
             {
-                LastKeyPressed = null;
-            }
-
-            if (KeyMap.ContainsKey(key))
-            {
-                Keys[KeyMap[key]] = 0;
+                _keys[keyValue] = 0;
             }
         }
 
-        public async Task Execute()
+        private void Reset()
         {
-            ushort instruction = (ushort)((Memory[PC] << 8) | Memory[PC + 1]);
+            Array.Clear(_memory, 0, _memory.Length);
+            Array.Clear(_registers, 0, _registers.Length);
+            Array.Clear(_stack, 0, _stack.Length);
 
-            // 00E0 - CLS
-            if (instruction == 0x00E0)
-            {
-                ClearDisplay();
-            }
+            _I = 0;
+            _PC = _initialPC;
+            _SP = 0;
+            _delayTimer = 0;
+            _soundTimer = 0;
 
-            // 00EE RET
-            if (instruction == 0x00EE)
+            // reset implementation-specific variables
+            Array.Clear(_keys, 0, _keys.Length);
+
+            _waitingForInput = false;
+            _lastKeyPressed = null;
+
+            // reinitialize sprites and clear display 
+            Initialize();
+
+            if (_lastFilename != null)
             {
-                PC = Stack[SP--];
+                LoadRom(_lastFilename);
             }
+        }
+
+        private ushort Fetch()
+        {
+            return (ushort)((_memory[_PC] << 8) | _memory[_PC + 1]);
+        }
+
+        // see http://devernay.free.fr/hacks/chip8/C8TECH10.HTM and https://en.wikipedia.org/wiki/CHIP-8#Opcode_table
+        private void DecodeAndExecute(ushort instruction)
+        {
+            byte instructionType = (byte)((instruction & 0xF000) >> 12);
 
             ushort nnn = (ushort)(instruction & 0x0FFF);
             byte x = (byte)((instruction & 0x0F00) >> 8);
@@ -143,354 +198,347 @@ namespace CHIP_8
             byte kk = (byte)(instruction & 0x00FF);
             byte n = (byte)(instruction & 0x000F);
 
-            // 1nnn - JP addr
-            if ((instruction & 0xF000) == 0x1000)
+            switch (instructionType)
             {
-                PC = nnn;
-                return;
-            }
-
-            // 2nnn - CALL addr
-            if ((instruction & 0xF000) == 0x2000)
-            {
-                Stack[++SP] = PC;
-                PC = nnn;
-                return;
-            }
-
-            // 3xkk - SE Vx, byte
-            if ((instruction & 0xF000) == 0x3000)
-            {
-                if (Registers[x] == kk)
-                {
-                    PC += 2;
-                }
-            }
-
-            // 4xkk - SNE Vx, byte
-            if ((instruction & 0xF000) == 0x4000)
-            {
-                if (Registers[x] != kk)
-                {
-                    PC += 2;
-                }
-            }
-
-            // 5xy0 - SE Vx, Vy
-            if ((instruction & 0xF00F) == 0x5000)
-            {
-                if (Registers[x] == Registers[y])
-                {
-                    PC += 2;
-                }
-            }
-
-            // 6xkk - LD Vx, byte
-            if ((instruction & 0xF000) == 0x6000)
-            {
-                Registers[x] = kk;
-            }
-
-            // 7xkk - ADD Vx, byte
-            if ((instruction & 0xF000) == 0x7000)
-            {
-                Registers[x] += kk;
-            }
-
-            // 8xy0 - LD Vx, Vy
-            if ((instruction & 0xF00F) == 0x8000)
-            {
-                Registers[x] = Registers[y];
-            }
-
-            // 8xy1 - OR Vx, Vy
-            if ((instruction & 0xF00F) == 0x8001)
-            {
-                Registers[x] |= Registers[y];
-            }
-
-            // 8xy2 - AND Vx, Vy
-            if ((instruction & 0xF00F) == 0x8002)
-            {
-                Registers[x] &= Registers[y];
-            }
-
-            // 8xy3 - XOR Vx, Vy
-            if ((instruction & 0xF00F) == 0x8003)
-            {
-                Registers[x] ^= Registers[y];
-            }
-
-            // 8xy4 - ADD Vx, Vy
-            if ((instruction & 0xF00F) == 0x8004)
-            {
-                int result = Registers[x] + Registers[y];
-
-                if (result > 256)
-                {
-                    Registers[0xF] = 1;
-                }
-                else
-                {
-                    Registers[0xF] = 0;
-                }
-
-                Registers[x] = (byte)result;
-            }
-
-            // 8xy5 - SUB Vx, Vy
-            if ((instruction & 0xF00F) == 0x8005)
-            {
-                if (Registers[x] > Registers[y])
-                {
-                    Registers[0xF] = 1;
-                }
-                else
-                {
-                    Registers[0xF] = 0;
-                }
-
-                Registers[x] -= Registers[y];
-            }
-
-            // 8xy6 - SHR Vx {, Vy}
-            if ((instruction & 0xF00F) == 0x8006)
-            {
-                if ((Registers[x] & 1) == 1)
-                {
-                    Registers[0xF] = 1;
-                }
-                else
-                {
-                    Registers[0xF] = 0;
-                }
-
-                Registers[x] /= 2;
-            }
-
-            // 8xy7 - SUBN Vx, Vy
-            if ((instruction & 0xF00F) == 0x8007)
-            {
-                if (Registers[y] > Registers[x])
-                {
-                    Registers[0xF] = 1;
-                }
-                else
-                {
-                    Registers[0xF] = 0;
-                }
-
-                Registers[x] = (byte)(Registers[y] - Registers[x]);
-            }
-
-            // 8xyE - SHL Vx {, Vy}
-            if ((instruction & 0xF00F) == 0x800E)
-            {
-                if ((Registers[x] & 0x8000) == 0x8000)
-                {
-                    Registers[0xF] = 1;
-                }
-                else
-                {
-                    Registers[0xF] = 0;
-                }
-
-                Registers[x] *= 2;
-            }
-
-            // 9xy0 - SNE Vx, Vy
-            if ((instruction & 0xF00F) == 0x9000)
-            {
-                if (Registers[x] != Registers[y])
-                {
-                    PC += 2;
-                }
-            }
-
-            // Annn - LD I, addr
-            if ((instruction & 0xF000) == 0xA000)
-            {
-                I = nnn;
-            }
-
-            // Bnnn - JP V0, addr
-            if ((instruction & 0xF000) == 0xB000)
-            {
-                PC = (ushort)(nnn + Registers[0]);
-            }
-
-            // Cxkk - RND Vx, byte
-            if ((instruction & 0xF000) == 0xC000)
-            {
-                Registers[x] = (byte)(Random.Next(256) & kk);
-            }
-
-            // Dxyn - DRW Vx, Vy, nibble
-            if ((instruction & 0xF000) == 0xD000)
-            {
-                bool collision = false;
-
-                int xStart = Registers[x];
-                int yStart = Registers[y];
-
-                for (int yPos = 0; yPos < n; yPos++)
-                {
-                    byte row = Memory[I + yPos];
-                    for (int xPos = 7; xPos >= 0; xPos--)
+                // 00kk
+                case 0x0:
+                    switch (kk)
                     {
-                        byte bit = (byte)(row & 1);
-                        row >>= 1;
+                        // 00E0 - CLS
+                        case 0xE0:
+                            ClearDisplay();
+                            break;
 
-                        int xCoord = (xStart + xPos) % Display.GetLength(0);
-                        int yCoord = (yStart + yPos) % Display.GetLength(1);
-
-                        byte initial = Display[xCoord, yCoord];
-
-                        if (initial != 0 && (initial ^ bit) == 0)
-                        {
-                            collision = true;
-                        }
-
-                        Display[xCoord, yCoord] = (byte)(initial ^ bit);
-
-                        SetPixel(xCoord, yCoord, (Display[xCoord, yCoord] == 1) ? true : false);
+                        // 00EE RET
+                        case 0xEE:
+                            _PC = _stack[_SP--];
+                            break;
                     }
-                }
+                    break;
 
-                if (collision)
-                {
-                    Registers[0xF] = 1;
-                }
-                else
-                {
-                    Registers[0xF] = 0;
-                }
+                // 1nnn - JP addr
+                case 0x1:
+                    _PC = nnn;
+                    return;
 
-                await Task.Delay(1);
+                // 2nnn - CALL addr
+                case 0x2:
+                    _stack[++_SP] = _PC;
+                    _PC = nnn;
+                    return;
+
+                // 3xkk - SE Vx, byte
+                case 0x3:
+                    if (_registers[x] == kk)
+                    {
+                        _PC += 2;
+                    }
+                    break;
+
+                // 4xkk - SNE Vx, byte
+                case 0x4:
+                    if (_registers[x] != kk)
+                    {
+                        _PC += 2;
+                    }
+                    break;
+
+                // 5xy0 - SE Vx, Vy
+                case 0x5:
+                    if (_registers[x] == _registers[y])
+                    {
+                        _PC += 2;
+                    }
+                    break;
+
+                // 6xkk - LD Vx, byte
+                case 0x6:
+                    _registers[x] = kk;
+                    break;
+
+                // 7xkk - ADD Vx, byte
+                case 0x7:
+                    _registers[x] += kk;
+                    break;
+
+                // 8xyn - math and assignment
+                case 0x8:
+                    switch (n)
+                    {
+                        // 8xy0 - LD Vx, Vy
+                        case 0x0:
+                            _registers[x] = _registers[y];
+                            break;
+
+                        // 8xy1 - OR Vx, Vy
+                        case 0x1:
+                            _registers[x] |= _registers[y];
+                            break;
+
+                        // 8xy2 - AND Vx, Vy
+                        case 0x2:
+                            _registers[x] &= _registers[y];
+                            break;
+
+                        // 8xy3 - XOR Vx, Vy
+                        case 0x3:
+                            _registers[x] ^= _registers[y];
+                            break;
+
+                        // 8xy4 - ADD Vx, Vy
+                        case 0x4:
+                            int result = _registers[x] + _registers[y];
+
+                            if (result > 256)
+                            {
+                                _registers[0xF] = 1;
+                            }
+                            else
+                            {
+                                _registers[0xF] = 0;
+                            }
+
+                            _registers[x] = (byte)result;
+                            break;
+
+                        // 8xy5 - SUB Vx, Vy
+                        case 0x5:
+                            if (_registers[x] > _registers[y])
+                            {
+                                _registers[0xF] = 1;
+                            }
+                            else
+                            {
+                                _registers[0xF] = 0;
+                            }
+
+                            _registers[x] -= _registers[y];
+                            break;
+
+                        // 8xy6 - SHR Vx {, Vy}
+                        case 0x6:
+                            if ((_registers[x] & 1) == 1)
+                            {
+                                _registers[0xF] = 1;
+                            }
+                            else
+                            {
+                                _registers[0xF] = 0;
+                            }
+
+                            _registers[x] /= 2;
+                            break;
+
+                        // 8xy7 - SUBN Vx, Vy
+                        case 0x7:
+                            if (_registers[y] > _registers[x])
+                            {
+                                _registers[0xF] = 1;
+                            }
+                            else
+                            {
+                                _registers[0xF] = 0;
+                            }
+
+                            _registers[x] = (byte)(_registers[y] - _registers[x]);
+                            break;
+
+                        // 8xyE - SHL Vx {, Vy}
+                        case 0xE:
+                            if ((_registers[x] & 0x8000) == 0x8000)
+                            {
+                                _registers[0xF] = 1;
+                            }
+                            else
+                            {
+                                _registers[0xF] = 0;
+                            }
+
+                            _registers[x] *= 2;
+                            break;
+                    }
+                    break;
+
+                // 9xy0 - SNE Vx, Vy
+                case 0x9:
+                    if (_registers[x] != _registers[y])
+                    {
+                        _PC += 2;
+                    }
+                    break;
+
+                // Annn - LD I, addr
+                case 0xA:
+                    _I = nnn;
+                    break;
+
+                // Bnnn - JP V0, addr
+                case 0xB:
+                    _PC = (ushort)(nnn + _registers[0]);
+                    break;
+
+                // Cxkk - RND Vx, byte
+                case 0xC:
+                    _registers[x] = (byte)(_random.Next(256) & kk);
+                    break;
+
+                // Dxyn - DRW Vx, Vy, nibble
+                case 0xD:
+                    bool collision = false;
+
+                    int xStart = _registers[x];
+                    int yStart = _registers[y];
+
+                    for (int yPos = 0; yPos < n; yPos++)
+                    {
+                        byte row = _memory[_I + yPos];
+                        for (int xPos = 7; xPos >= 0; xPos--)
+                        {
+                            byte bit = (byte)(row & 1);
+                            row >>= 1;
+
+                            int xCoord = (xStart + xPos) % _display.GetLength(0);
+                            int yCoord = (yStart + yPos) % _display.GetLength(1);
+
+                            byte initial = _display[xCoord, yCoord];
+
+                            if (initial != 0 && (initial ^ bit) == 0)
+                            {
+                                collision = true;
+                            }
+
+                            _display[xCoord, yCoord] = (byte)(initial ^ bit);
+
+                            SetPixel(xCoord, yCoord, (_display[xCoord, yCoord] == 1) ? PixelColor.White : PixelColor.Black);
+                        }
+                    }
+
+                    if (collision)
+                    {
+                        _registers[0xF] = 1;
+                    }
+                    else
+                    {
+                        _registers[0xF] = 0;
+                    }
+                    break;
+
+                // Exkk
+                case 0xE:
+                    byte key = _registers[x];
+                    switch (kk)
+                    {
+                        // Ex9E - SKP Vx
+                        case 0x9E:
+                            if (_keys[key] == 1)
+                            {
+                                _PC += 2;
+                            }
+                            break;
+
+                        // ExA1 - SKNP Vx
+                        case 0xA1:
+                            if (_keys[key] == 0)
+                            {
+                                _PC += 2;
+                            }
+                            break;
+                    }
+                    break;
+
+                // Fxkk
+                case 0xF:
+                    switch (kk)
+                    {
+                        // Fx07 - LD Vx, DT
+                        case 0x07:
+                            _registers[x] = _delayTimer;
+                            break;
+
+                        // Fx0A - LD Vx, K
+                        case 0x0A:
+                            if (!MaybeReadKey(out byte lastPressedKey))
+                            {
+                                return;
+                            }
+
+                            _registers[x] = lastPressedKey;
+                            break;
+
+                        // Fx15 - LD DT, Vx
+                        case 0x15:
+                            _delayTimer = _registers[x];
+                            break;
+
+                        // Fx18 - LD ST, Vx
+                        case 0x18:
+                            _soundTimer = _registers[x];
+                            break;
+
+                        // Fx1E - ADD I, Vx
+                        case 0x1E:
+                            _I += _registers[x];
+                            break;
+
+                        // Fx29 - LD F, Vx
+                        case 0x29:
+                            _I = (byte)(_registers[x] * 5);
+                            break;
+
+                        // Fx33 - LD B, Vx
+                        case 0x33:
+                            byte bcd = _registers[x];
+
+                            _memory[_I + 2] = (byte)(bcd % 10);
+                            bcd /= 10;
+                            _memory[_I + 1] = (byte)(bcd % 10);
+                            bcd /= 10;
+                            _memory[_I] = (byte)(bcd / 100);
+                            break;
+
+                        // Fx55 - LD [I], Vx
+                        case 0x55:
+                            for (int idx = 0; idx < x; idx++)
+                            {
+                                _memory[_I + idx] = _registers[idx];
+                            }
+                            break;
+
+                        // Fx65 - LD Vx, [I]
+                        case 0x65:
+                            for (int idx = 0; idx < x; idx++)
+                            {
+                                _registers[idx] = _memory[_I + idx];
+                            }
+                            break;
+                    }
+                    break;
             }
 
-            // Ex9E - SKP Vx
-            if ((instruction & 0xF0FF) == 0xE09E)
-            {
-                byte key = Registers[x];
-
-                if (Keys[key] == 1)
-                {
-                    PC += 2;
-                }
-            }
-
-            // ExA1 - SKNP Vx
-            if ((instruction & 0xF0FF) == 0xE0A1)
-            {
-                byte key = Registers[x];
-
-                if (Keys[key] == 0)
-                {
-                    PC += 2;
-                }
-            }
-
-            // Fx07 - LD Vx, DT
-            if ((instruction & 0xF0FF) == 0xF007)
-            {
-                Registers[x] = DelayTimer;
-            }
-
-            // Fx0A - LD Vx, K
-            if ((instruction & 0xF0FF) == 0xF00A)
-            {
-                Registers[x] = await WaitForKey();
-            }
-
-            // Fx15 - LD DT, Vx
-            if ((instruction & 0xF0FF) == 0xF015)
-            {
-                DelayTimer = Registers[x];
-            }
-
-            // Fx18 - LD ST, Vx
-            if ((instruction & 0xF0FF) == 0xF018)
-            {
-                SoundTimer = Registers[x];
-            }
-
-            // Fx1E - ADD I, Vx
-            if ((instruction & 0xF0FF) == 0xF01E)
-            {
-                I += Registers[x];
-            }
-
-            // Fx29 - LD F, Vx
-            if ((instruction & 0xF0FF) == 0xF029)
-            {
-                I = (byte)(Registers[x] * 5);
-            }
-
-            // Fx33 - LD B, Vx
-            if ((instruction & 0xF0FF) == 0xF033)
-            {
-                byte bcd = Registers[x];
-
-                Memory[I + 2] = (byte)(bcd % 10);
-                bcd /= 10;
-                Memory[I + 1] = (byte)(bcd % 10);
-                bcd /= 10;
-                Memory[I] = (byte)(bcd / 100);
-            }
-
-            // Fx55 - LD [I], Vx
-            if ((instruction & 0xF0FF) == 0xF055)
-            {
-                for (int idx = 0; idx < x; idx++)
-                {
-                    Memory[I + idx] = Registers[idx];
-                }
-            }
-
-            // Fx65 - LD Vx, [I]
-            if ((instruction & 0xF0FF) == 0xF065)
-            {
-                for (int idx = 0; idx < x; idx++)
-                {
-                    Registers[idx] = Memory[I + idx];
-                }
-            }
-
-            PC += 2;
+            _PC += 2;
         }
 
-        private void SetPixel(int x, int y, bool enabled)
+        private void SetPixel(int x, int y, PixelColor pixel)
         {
-            Int32Rect rect = new Int32Rect(x, y, 1, 1);
+            Int32Rect rect = new Int32Rect(x, y, width: 1, height: 1);
+            byte[] pixelArray = pixel == PixelColor.White ? _whitePixel : _blackPixel;
 
-            if (enabled)
-            {
-                byte[] whitePixel = { 255, 255, 255, 255 };
-                WriteableBitmap.WritePixels(rect, whitePixel, 4, 0);
-            }
-            else
-            {
-                byte[] blackPixel = { 0, 0, 0, 255 };
-                WriteableBitmap.WritePixels(rect, blackPixel, 4, 0);
-            }
+            WriteableBitmap.WritePixels(rect, pixelArray, pixelArray.Length, 0);
         }
 
-        private async void ClearDisplay()
+        private void ClearDisplay()
         {
-            for (int col = 0; col < Display.GetLength(0); col++)
+            for (int col = 0; col < _display.GetLength(0); col++)
             {
-                for (int row = 0; row < Display.GetLength(1); row++)
+                for (int row = 0; row < _display.GetLength(1); row++)
                 {
-                    Display[col, row] = 0;
-                    SetPixel(col, row, false);
+                    _display[col, row] = 0;
+                    SetPixel(col, row, PixelColor.Black);
                 }
             }
-
-            await Task.Delay(1);
         }
 
-        private async Task<byte> WaitForKey()
+        private bool MaybeReadKey(out byte keyValue)
         {
             /*
             Keypad                   Keyboard
@@ -505,17 +553,20 @@ namespace CHIP_8
             +-+-+-+-+                +-+-+-+-+
             */
 
-            while (true)
+            if (!_lastKeyPressed.HasValue)
             {
-                if (LastKeyPressed.HasValue && KeyMap.ContainsKey(LastKeyPressed.Value))
-                {
-                    var ret = KeyMap[LastKeyPressed.Value];
-                    LastKeyPressed = null;
-                    return ret;
-                }
+                _waitingForInput = true;
 
-                await Task.Delay(1);
+                keyValue = 0;
+                return false;
             }
+
+            keyValue = _lastKeyPressed.Value;
+
+            _lastKeyPressed = null;
+            _waitingForInput = false;
+
+            return true;
         }
 
         private void InitializeSprites()
@@ -546,7 +597,7 @@ namespace CHIP_8
                 // load one byte at a time into memory
                 for (int i = 0; i < spriteHex.Length; i += 2)
                 {
-                    Memory[idx++] = Convert.ToByte(spriteHex.Substring(i, 2), 16);
+                    _memory[idx++] = Convert.ToByte(spriteHex.Substring(i, 2), 16);
                 }
             }
         }
