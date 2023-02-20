@@ -3,7 +3,7 @@ using System.Windows;
 namespace CHIP_8
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Interaction logic for EmulatorWindow.xaml
     /// </summary>
     public partial class EmulatorWindow : Window
     {
@@ -22,7 +22,7 @@ namespace CHIP_8
         {
             Chip8.Initialize();
 
-            Chip8.LoadRom("space_invaders.ch8");
+            Chip8.LoadRom("breakout.ch8");
 
             await Chip8.Run();
         }
